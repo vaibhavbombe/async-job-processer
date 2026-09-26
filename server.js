@@ -1,4 +1,5 @@
 const express = require('express')
+const cors = require('cors')
 const reportQueue = require('./queue')
 require('dotenv').config()
 const JobLog = require('./models/JobLog')
@@ -10,6 +11,7 @@ const http = require('http')
 const { Server } = require('socket.io')
 
 const app = express()
+app.use(cors())
 app.use(express.json())
 
 app.post('/api/jobs', async (req, res) => {
@@ -39,6 +41,11 @@ app.get('/api/jobs/history', async (req, res) => {
   res.json(logs)
 })
 
+app.get('/api/queue/stats', async (req, res) => {
+  const counts = await reportQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed')
+  res.json(counts)
+})
+
 const serverAdapter = new ExpressAdapter()
 serverAdapter.setBasePath('/admin/queues')
 
@@ -49,17 +56,16 @@ createBullBoard({
 
 app.use('/admin/queues', serverAdapter.getRouter())
 
-
 const server = http.createServer(app)
 const io = new Server(server, {
-  cors: { origin: 'http://localhost:5173' }, // adjust once we know your dashboard's actual port
+  cors: { origin: 'http://localhost:5174' },
 })
 
-app.set('io', io) // lets other files (like worker.js, if needed) or routes access io
+app.set('io', io)
 
 io.on('connection', (socket) => {
   socket.on('job-event', (data) => {
-    io.emit('job-event', data) // broadcast to all connected dashboards
+    io.emit('job-event', data)
   })
 })
 
