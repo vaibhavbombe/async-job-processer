@@ -11,7 +11,7 @@ const http = require('http')
 const { Server } = require('socket.io')
 
 const app = express()
-app.use(cors())
+app.use(cors({ origin: 'https://your-actual-dashboard-url.vercel.app' }))
 app.use(express.json())
 
 app.post('/api/jobs', async (req, res) => {
@@ -58,7 +58,7 @@ app.use('/admin/queues', serverAdapter.getRouter())
 
 const server = http.createServer(app)
 const io = new Server(server, {
-  cors: { origin: '*' }, // update to your real dashboard URL once deployed
+  cors: { origin: 'https://your-actual-dashboard-url.vercel.app' },
 })
 
 app.set('io', io)
