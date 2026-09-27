@@ -4,7 +4,7 @@ A background job queue system built to decouple slow, unreliable work from
 user-facing requests — with automatic retries, permanent job history, and a
 live real-time dashboard.
 
-**Live demo:** _add URL once deployed_
+**Live demo:** https://async-job-processer.vercel.app/
 **Dashboard repo:** this repo (`/client` folder)
 
 ---
