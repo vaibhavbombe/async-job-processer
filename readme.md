@@ -6,6 +6,7 @@ live real-time dashboard.
 
 **Live demo:** https://async-job-processer.vercel.app/
 **Dashboard repo:** this repo (`/client` folder)
+<img width="1905" height="901" alt="image" src="https://github.com/user-attachments/assets/0d674e5b-976a-40f6-980d-2ec5e497c3c4" />
 
 ---
 
