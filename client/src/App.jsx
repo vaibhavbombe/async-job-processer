@@ -69,7 +69,7 @@ export default function App() {
     }
 
     init()
-
+    const statsInterval = setInterval(fetchStats, 2000)
     socketRef.current = io(API_URL)
 
     socketRef.current.on('job-event', (event) => {
@@ -90,8 +90,12 @@ export default function App() {
       })
     })
 
-    return () => socketRef.current.disconnect()
+    return () => {
+      socketRef.current.disconnect()
+      clearInterval(statsInterval)
+    }
   }, [])
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!reportName.trim()) return
@@ -146,6 +150,21 @@ export default function App() {
       <main className="dashboard-grid">
         {/* Left column - submit form + stats */}
         <section className="col col-left">
+          <form className="submit-form" onSubmit={handleSubmit}>
+            <label>Submit a job</label>
+            <input
+              value={reportName}
+              onChange={(e) => setReportName(e.target.value)}
+              placeholder="e.g. Q3 Sales Report"
+              disabled={submitting}
+            />
+            <button type="submit" disabled={submitting}>
+              <FiSend size={14} /> {submitting ? 'Submitting...' : 'Submit'}
+            </button>
+            {lastResult && (
+              <p className={`submit-result ${lastResult.ok ? 'ok' : 'error'}`}>{lastResult.text}</p>
+            )}
+          </form>
 
           <div className="stats-stack">
             {stats && Object.entries(stats).map(([key, value]) => {
@@ -205,7 +224,6 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
-              
             </div>
           </div>
         </section>

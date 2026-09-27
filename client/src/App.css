@@ -1,15 +1,21 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500&display=swap');
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; background: #0B0B0D; }
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: #0B0B0D;
+  overflow: hidden; /* no page-level scrollbar, ever */
+}
 
 .app-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
   background: #0B0B0D;
   color: #F5F5F3;
   font-family: 'Inter', sans-serif;
+  overflow: hidden;
 }
 
 .navbar {
@@ -44,8 +50,11 @@ html, body, #root { height: 100%; margin: 0; background: #0B0B0D; }
   grid-template-columns: 260px 1fr 320px;
   gap: 1.25rem;
   padding: 1.5rem 2rem;
-  align-items: start;
+  min-height: 0; /* required so children can scroll internally instead of expanding the page */
+  overflow: hidden;
 }
+
+.col { min-height: 0; overflow-y: auto; }
 
 .col { display: flex; flex-direction: column; gap: 1rem; }
 
@@ -111,25 +120,29 @@ html, body, #root { height: 100%; margin: 0; background: #0B0B0D; }
 .submit-result.ok { color: #4AD3C9; }
 .submit-result.error { color: #FF6B45; }
 
-.stats-stack { display: flex; flex-direction: column; gap: 0.7rem; }
-
+.stats-stack {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
 .stat-card {
   background: #17171A;
   border: 1px solid #26262A;
   border-left: 3px solid var(--accent);
   border-radius: 8px;
-  padding: 0.75rem 0.9rem;
+  padding: 0.65rem 0.7rem;
   display: flex;
-  align-items: center;
-  gap: 0.7rem;
+  flex-direction: column;
+  gap: 0.3rem;
 }
 .stat-icon { color: var(--accent); flex-shrink: 0; }
 .stat-value { font-family: 'JetBrains Mono', monospace; font-size: 1.2rem; font-weight: 700; margin: 0; line-height: 1; }
 .stat-label { font-size: 0.68rem; color: #A6A6AC; margin: 0.15rem 0 0 0; text-transform: uppercase; letter-spacing: 0.03em; }
 
-.col-middle .panel { height: 560px; display: flex; flex-direction: column; }
+.col-middle .panel { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.col-middle canvas { flex: 1; min-height: 0; }
 
-.table-scroll { max-height: 480px; overflow-y: auto; overflow-x: hidden; }
+.table-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
 .job-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.78rem; }
 .job-table th:nth-child(1), .job-table td:nth-child(1) { width: 45%; }
 .job-table th:nth-child(2), .job-table td:nth-child(2) { width: 30%; }
@@ -182,3 +195,5 @@ html, body, #root { height: 100%; margin: 0; background: #0B0B0D; }
   .dashboard-grid { grid-template-columns: 1fr; }
   .app-footer { flex-direction: column; gap: 0.3rem; }
 }
+
+.col-right .panel { height: 100%; display: flex; flex-direction: column; }
