@@ -1,141 +1,175 @@
-# Vaibhav Bombe — Portfolio
+# Async Job Processor
 
-A full-stack portfolio site built as a live learning project — shipping real
-features (not tutorials-only) across the MERN stack, React Three Fiber,
-Socket.io, Redis, and (upcoming) an AI chat feature with RAG.
+A background job queue system built to decouple slow, unreliable work from
+user-facing requests — with automatic retries, permanent job history, and a
+live real-time dashboard.
 
-**Live site:** https://vaibhav-bombe-portfolio.vercel.app
-**Backend API:** https://vaibhav-portfolio-api.onrender.com
+**Live demo:** _add URL once deployed_
+**Dashboard repo:** this repo (`/client` folder)
 
 ---
 
-## What's in here
+## The problem this solves
 
-- **Home** — dark hero section with an interactive 3D "tech globe" (React
-  Three Fiber), draggable and auto-rotating, showing the stack below as
-  compartments on its surface. Includes a "currently learning" section and
-  live GitHub/LeetCode links.
-- **About** — experience, a horizontally auto-scrolling tech-stack marquee,
-  and **live** GitHub + LeetCode stats pulled through the backend (cached
-  via Redis, not re-fetched on every page load).
-- **Projects** — biCanvas and AGROFAM, with tech tags.
-- **Hire Me** — a real contact form: submissions are saved to MongoDB *and*
-  emailed via Gmail/Nodemailer, with live validation and error states.
-- **Dark/light theme toggle** — persisted in `localStorage`, respects system
-  preference on first visit.
-- **Live visitor counter** — real-time, via Socket.io, shown in the footer.
-- **Real-time contact notifications** — when someone submits the Hire Me
-  form, a toast appears instantly for the site owner (via a Socket.io
-  "admin room"), without polling or refreshing.
+Most simple web apps do work synchronously: a request comes in, the server
+does the work right then, and sends back a response. That falls apart when
+the work is slow (generating a report, processing a file) or unreliable
+(calling a flaky third-party API) — the request hangs, the server's
+resources are tied up, and a single failure means the work is just lost.
+
+This project solves that by decoupling **accepting** work from **doing**
+work:
+
+1. A client submits a job → the API responds instantly with a job ID
+2. A **separate worker process** picks up the job and does the actual work,
+   independently, on its own schedule
+3. If the work fails, it **automatically retries with exponential backoff**
+   rather than immediately hammering the failing service again
+4. Every outcome — success or permanent failure — is **permanently logged**,
+   so there's a real audit trail
+
+This is the same underlying pattern behind order-confirmation emails, bulk
+report generation, webhook delivery, and most "processing..." states in
+real products.
+
+---
+
+## Architecture
+
+```
+Client (React dashboard)
+      |
+      | REST (submit job, fetch stats/history)
+      v
+Express API  <-------- Socket.io -------->  Dashboard (live updates)
+      |                     ^
+      | adds job            | relays job-event
+      v                     |
+   Redis (BullMQ queue)     |
+      ^                     |
+      | picks up job        |
+      |                     |
+   Worker process ----------+
+      |
+      | logs final outcome
+      v
+   MongoDB (permanent job history)
+```
+
+**Why two different data stores, not just one:**
+- **Redis** holds live, ephemeral queue state — which jobs are waiting,
+  active, or recently finished. It's fast and built for this, but not meant
+  as permanent storage; BullMQ cleans up old job data to keep it lean.
+- **MongoDB** holds permanent, queryable history — every job's final
+  outcome, kept indefinitely, independent of whatever Redis is currently
+  doing. Using each store for what it's actually good at, rather than
+  forcing one tool to do both jobs, was a deliberate design decision.
+
+**Why the worker is a separate process, not a function the API calls
+directly:** this is the actual point of a job queue. The API stays fast and
+responsive regardless of how long the real work takes, because it never
+waits for it — it just adds the job to Redis and returns. The worker (in a
+real production deployment, potentially running on entirely separate
+hardware) processes jobs on its own time.
 
 ---
 
 ## Tech stack
 
-**Frontend** (`/client`)
-- React 18 + Vite
-- Tailwind CSS (custom design tokens, dark mode via CSS variables)
-- React Router
-- React Three Fiber + drei (3D globe)
-- Socket.io Client
-- react-icons
-
-**Backend** (`/server`)
-- Node.js + Express
-- MongoDB (via Mongoose) — contact form persistence
-- Redis — caching external API responses (GitHub, LeetCode) with a 1-hour TTL
-- Socket.io — live visitor count, real-time contact notifications (with
-  room-based targeting)
-- Nodemailer — sends contact form submissions to Gmail via an app password
-- GitHub REST API (token-authenticated) + LeetCode's GraphQL endpoint, both
-  proxied and cached server-side
-
-**Coming next**
-- AI chat feature: Python + FastAPI service using retrieval-augmented
-  generation (RAG) over resume/project data
-- Docker + CI/CD (GitHub Actions) for both services
-- Automated tests (frontend + backend)
+- **Node.js + Express** — API server
+- **BullMQ + Redis** — the actual job queue: adding jobs, tracking state,
+  retry/backoff scheduling
+- **MongoDB (Mongoose)** — permanent job history
+- **Socket.io** — real-time updates from worker → server → dashboard
+- **React + Chart.js + Axios** — the live dashboard
+- **Bull Board** — a pre-built admin UI (`/admin/queues`) for inspecting
+  the queue directly, used during development/debugging
 
 ---
 
-## Project structure
+## Features
 
-```
-portfolio/
-  client/                 React + Vite frontend
-    src/
-      components/         Navbar, Footer, Hero3D, TechMarquee, etc.
-      pages/               Home, About, Projects, HireMe
-      context/             ThemeContext (dark/light mode)
-      data/                 Shared tech-stack data (used by globe + marquee)
-      socket.js             Shared Socket.io client connection
-      config.js              API_URL, environment-aware
-    vercel.json              SPA rewrite rules (fixes refresh 404s)
-  server/                  Express backend
-    server.js                All routes + Socket.io + Mongo/Redis connections
-    .env                     Local secrets (not committed)
-```
+- Instant job submission — API responds in milliseconds regardless of how
+  long the actual work takes
+- Automatic retries with exponential backoff (up to 4 attempts, delay
+  roughly doubling each time) on simulated realistic failure
+- Permanent job history in MongoDB, with correct handling of the
+  "failed-then-retried-then-succeeded" case (only the final outcome is
+  logged, not every individual retry attempt)
+- Live dashboard: real-time stat cards (waiting/active/completed/failed),
+  a live throughput chart seeded from real history on load, and a
+  scrollable recent-jobs log — all updating via Socket.io, no polling or
+  manual refresh needed for job events (stats also poll every 2s as a
+  safety net for the in-between "active" window)
+- Bull Board integration for direct queue inspection during development
+
+---
+
+## Honest limitations (things I'd address before real production use)
+
+Being specific about known gaps here on purpose — understanding the edges
+of what you built matters as much as the parts that work.
+
+- **No idempotency guard.** If a job completes but the "mark as done" step
+  fails before BullMQ registers it, a retry could re-run already-completed
+  work. A production system would need an idempotency key checked before
+  execution.
+- **Worker crash recovery is untested.** BullMQ has stalled-job detection
+  built in, but I haven't specifically verified recovery behavior if the
+  worker process dies mid-job.
+- **Bull Board has no authentication.** Fine for local development; a
+  public deployment would need basic auth in front of `/admin/queues`.
+- **Single worker instance.** BullMQ supports running multiple workers
+  against the same queue with no code changes (they coordinate through
+  Redis automatically) — this project runs one, since concurrency wasn't
+  the focus, but scaling horizontally would just mean starting more
+  `worker.js` processes.
+- **Redis Cloud free tier note:** the eviction policy had to be manually
+  changed from the default `volatile-lru` to `noeviction` — BullMQ
+  explicitly requires this, since job data should never be silently
+  evicted under memory pressure the way a pure cache's data safely can be.
 
 ---
 
 ## Running locally
 
-You'll need two terminals running at the same time — one for the frontend,
-one for the backend.
+You need **three processes running at once**, each in its own terminal.
 
-**Frontend**
+**1. API server**
+```bash
+npm install
+npm run server
+```
+Runs on `http://localhost:4000`.
+
+**2. Worker**
+```bash
+npm run worker
+```
+
+**3. Dashboard**
 ```bash
 cd client
 npm install
 npm run dev
 ```
-Runs at `http://localhost:5173`.
-
-**Backend**
-```bash
-cd server
-npm install
-npm run dev
-```
-Runs at `http://localhost:5000`.
+Runs on `http://localhost:5174`.
 
 ### Environment variables
 
-Neither `.env` file is committed (both are gitignored). You'll need to
-create them yourself:
-
-**`server/.env`**
+Create `.env` in the project root:
 ```
-GMAIL_USER=your-email@gmail.com
-GMAIL_APP_PASSWORD=your-16-char-app-password
-MONGODB_URI=your-mongodb-atlas-connection-string
-REDIS_URL=your-redis-cloud-connection-string
-GITHUB_TOKEN=your-github-personal-access-token
-ADMIN_SOCKET_KEY=any-shared-secret-string
-PORT=5000
-```
-
-**`client/.env`**
-```
-VITE_API_URL=http://localhost:5000
-VITE_ADMIN_SOCKET_KEY=same-value-as-server's-ADMIN_SOCKET_KEY
+REDIS_URL=your-redis-connection-string
+MONGODB_URI=your-mongodb-connection-string
+PORT=4000
 ```
 
 ---
 
-## Deployment
+## Trying it out
 
-- **Frontend** deploys automatically to **Vercel** on every push to
-  `master` (Root Directory: `client`)
-- **Backend** deploys automatically to **Render** on every push to
-  `master` (Root Directory: `server`)
-- Both services read their environment variables from their respective
-  hosting dashboards in production — not from any committed file.
-
----
-
-## Status
-
-Actively being built, feature by feature, as a learning project. See the
-"currently learning" section on the live site's Home page for an
-up-to-date, specific account of what's been shipped and what's next.
+Once all three are running, open the dashboard and submit a job by name
+directly from the form — no Postman needed. Watch the stat cards move
+from waiting → active → completed (or occasionally failed, then retried)
+in real time, and check `http://localhost:4000/admin/queues` for the
+full Bull Board view of the same data.
