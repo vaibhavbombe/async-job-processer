@@ -2,9 +2,11 @@ const { Worker } = require('bullmq')
 const connection = require('./config/redis')
 require('./config/mongo')
 const JobLog = require('./models/JobLog')
-const { io: ioClient } = require('socket.io-client')
 
-const socket = ioClient('http://localhost:4000')
+let io = null
+function setIo(ioInstance) {
+  io = ioInstance
+}
 
 const worker = new Worker(
   'report-generation',
@@ -26,11 +28,13 @@ const worker = new Worker(
 worker.on('completed', async (job) => {
   console.log(`✅ Job ${job.id} finished`)
 
-  socket.emit('job-event', {
-    jobId: job.id,
-    status: 'completed',
-    reportName: job.data.reportName,
-  })
+  if (io) {
+    io.emit('job-event', {
+      jobId: job.id,
+      status: 'completed',
+      reportName: job.data.reportName,
+    })
+  }
 
   await JobLog.create({
     jobId: job.id,
@@ -44,11 +48,13 @@ worker.on('failed', async (job, err) => {
   console.log(`❌ Job ${job.id} failed:`, err.message)
 
   if (job.attemptsMade >= job.opts.attempts) {
-    socket.emit('job-event', {
-      jobId: job.id,
-      status: 'failed',
-      reportName: job.data.reportName,
-    })
+    if (io) {
+      io.emit('job-event', {
+        jobId: job.id,
+        status: 'failed',
+        reportName: job.data.reportName,
+      })
+    }
 
     await JobLog.create({
       jobId: job.id,
@@ -61,3 +67,5 @@ worker.on('failed', async (job, err) => {
 })
 
 console.log('Worker is running and listening for jobs...')
+
+module.exports = { setIo }

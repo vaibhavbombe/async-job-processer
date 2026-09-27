@@ -21,8 +21,7 @@ This project solves that by decoupling **accepting** work from **doing**
 work:
 
 1. A client submits a job → the API responds instantly with a job ID
-2. A **separate worker process** picks up the job and does the actual work,
-   independently, on its own schedule
+2. A **worker** picks up the job and does the actual work independently
 3. If the work fails, it **automatically retries with exponential backoff**
    rather than immediately hammering the failing service again
 4. Every outcome — success or permanent failure — is **permanently logged**,
@@ -39,21 +38,19 @@ real products.
 ```
 Client (React dashboard)
       |
-      | REST (submit job, fetch stats/history)
+      | REST (submit job, fetch stats/history)  +  Socket.io (live updates)
       v
-Express API  <-------- Socket.io -------->  Dashboard (live updates)
-      |                     ^
-      | adds job            | relays job-event
-      v                     |
-   Redis (BullMQ queue)     |
-      ^                     |
-      | picks up job        |
-      |                     |
-   Worker process ----------+
-      |
-      | logs final outcome
-      v
-   MongoDB (permanent job history)
++-------------------------------------------+
+|  Node process (server.js)                 |
+|                                            |
+|   Express API  <---- io ---->  Worker     |
+|        |                          |       |
+|        | adds job                 | processes job
+|        v                          v       |
++-------------------------------------------+
+        |                          |
+        v                          v
+     Redis (BullMQ queue)    MongoDB (permanent job history)
 ```
 
 **Why two different data stores, not just one:**
@@ -65,12 +62,27 @@ Express API  <-------- Socket.io -------->  Dashboard (live updates)
   doing. Using each store for what it's actually good at, rather than
   forcing one tool to do both jobs, was a deliberate design decision.
 
-**Why the worker is a separate process, not a function the API calls
-directly:** this is the actual point of a job queue. The API stays fast and
-responsive regardless of how long the real work takes, because it never
-waits for it — it just adds the job to Redis and returns. The worker (in a
-real production deployment, potentially running on entirely separate
-hardware) processes jobs on its own time.
+**On the API and worker running in one process — a deliberate,
+stated tradeoff, not the ideal architecture:**
+
+The API and the worker are logically separate concerns (this is exactly why
+the queue exists — to decouple them), and they were originally built and
+run as two fully separate processes locally, communicating only through
+Redis and a Socket.io connection. For deployment, they were merged into a
+single Node process (`server.js` internally starts the worker) specifically
+because Render's free tier only covers its "Web Service" type — the
+"Background Worker" service type required to run `worker.js` as a truly
+separate deployment is paid-only, with no free tier at all.
+
+In a real production system with real traffic, I'd deploy these as genuinely
+separate services — so a spike in job-processing load can't slow down or
+crash API response times, and so each can be scaled independently. Running
+them combined here is a pragmatic, cost-driven choice for a free-tier
+portfolio deployment, not a claim that this is the correct architecture at
+scale. Locally, the code can still be run as two separate processes
+(`node server.js` and `node worker.js` independently) if you want to see
+the fully decoupled version — `worker.js` degrades gracefully and simply
+skips real-time broadcasts if it isn't handed a live Socket.io instance.
 
 ---
 
@@ -80,7 +92,7 @@ hardware) processes jobs on its own time.
 - **BullMQ + Redis** — the actual job queue: adding jobs, tracking state,
   retry/backoff scheduling
 - **MongoDB (Mongoose)** — permanent job history
-- **Socket.io** — real-time updates from worker → server → dashboard
+- **Socket.io** — real-time updates from worker → dashboard
 - **React + Chart.js + Axios** — the live dashboard
 - **Bull Board** — a pre-built admin UI (`/admin/queues`) for inspecting
   the queue directly, used during development/debugging
@@ -98,9 +110,9 @@ hardware) processes jobs on its own time.
   logged, not every individual retry attempt)
 - Live dashboard: real-time stat cards (waiting/active/completed/failed),
   a live throughput chart seeded from real history on load, and a
-  scrollable recent-jobs log — all updating via Socket.io, no polling or
-  manual refresh needed for job events (stats also poll every 2s as a
-  safety net for the in-between "active" window)
+  scrollable recent-jobs log — updating via Socket.io on every job
+  completion, with a lightweight polling fallback on the stats endpoint so
+  in-between states (a job sitting "active") stay current too
 - Bull Board integration for direct queue inspection during development
 
 ---
@@ -110,20 +122,22 @@ hardware) processes jobs on its own time.
 Being specific about known gaps here on purpose — understanding the edges
 of what you built matters as much as the parts that work.
 
+- **API and worker run in one process in this deployment**, for the
+  free-tier cost reason explained above — not how I'd architect this for
+  real scale.
 - **No idempotency guard.** If a job completes but the "mark as done" step
   fails before BullMQ registers it, a retry could re-run already-completed
   work. A production system would need an idempotency key checked before
   execution.
 - **Worker crash recovery is untested.** BullMQ has stalled-job detection
   built in, but I haven't specifically verified recovery behavior if the
-  worker process dies mid-job.
+  process dies mid-job.
 - **Bull Board has no authentication.** Fine for local development; a
   public deployment would need basic auth in front of `/admin/queues`.
 - **Single worker instance.** BullMQ supports running multiple workers
   against the same queue with no code changes (they coordinate through
   Redis automatically) — this project runs one, since concurrency wasn't
-  the focus, but scaling horizontally would just mean starting more
-  `worker.js` processes.
+  the focus.
 - **Redis Cloud free tier note:** the eviction policy had to be manually
   changed from the default `volatile-lru` to `noeviction` — BullMQ
   explicitly requires this, since job data should never be silently
@@ -133,21 +147,21 @@ of what you built matters as much as the parts that work.
 
 ## Running locally
 
-You need **three processes running at once**, each in its own terminal.
-
-**1. API server**
+**Combined (matches the deployed setup):**
 ```bash
 npm install
 npm run server
 ```
-Runs on `http://localhost:4000`.
+This starts the API and the worker together in one process, on
+`http://localhost:4000`.
 
-**2. Worker**
+**Or, fully decoupled (two processes, matches the "real" architecture):**
 ```bash
-npm run worker
+npm run server   # in one terminal
+npm run worker   # in another
 ```
 
-**3. Dashboard**
+**Dashboard, either way:**
 ```bash
 cd client
 npm install
@@ -168,8 +182,8 @@ PORT=4000
 
 ## Trying it out
 
-Once all three are running, open the dashboard and submit a job by name
-directly from the form — no Postman needed. Watch the stat cards move
-from waiting → active → completed (or occasionally failed, then retried)
-in real time, and check `http://localhost:4000/admin/queues` for the
-full Bull Board view of the same data.
+Submit a job by name directly from the dashboard's form — no Postman
+needed. Watch the stat cards move from waiting → active → completed (or
+occasionally failed, then retried) in real time, and check
+`http://localhost:4000/admin/queues` for the full Bull Board view of the
+same data.

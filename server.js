@@ -58,7 +58,7 @@ app.use('/admin/queues', serverAdapter.getRouter())
 
 const server = http.createServer(app)
 const io = new Server(server, {
-  cors: { origin: 'http://localhost:5174' },
+  cors: { origin: '*' }, // update to your real dashboard URL once deployed
 })
 
 app.set('io', io)
@@ -68,6 +68,9 @@ io.on('connection', (socket) => {
     io.emit('job-event', data)
   })
 })
+
+const workerModule = require('./worker')
+workerModule.setIo(io)
 
 const PORT = process.env.PORT || 4000
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`))
